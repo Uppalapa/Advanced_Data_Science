@@ -1,0 +1,573 @@
+---
+title: "R Notebook"
+output:
+  html_notebook: default
+  html_document: default
+  pdf_document: default
+---
+```{r}
+library('e1071')
+```
+
+```{r}
+setwd("~/Documents/OneDrive - Northeastern University/INFO7390/Midterm Project")
+data <- read.csv("train_data_no_missing_values.csv")
+data <- data[-1]
+```
+
+```{r}
+str(data)  
+#Two approaches towards this column: remove the column or 1-c the column
+dim(data)
+set.seed(1) 
+```
+
+```{r}
+#Define functions
+rmse <- function(error){
+  sqrt(mean(error^2))
+}
+
+me <- function(error){
+  mean(abs(error))
+}
+
+categoricalfunc <- function(colNames, data){
+  for(level in unique(data[[colNames]])){
+    data[paste(colNames,sep = "_",level)]<- ifelse(data[[colNames]] == level,1,0)
+  }
+  return(subset(data,select = -get(colNames)))
+}
+
+categoricalnum <- function(colNames, data){
+  count = 0
+  for(level in unique(data[[colNames]])){
+    count = count + 1
+  }
+  print(sprintf('Column %s has %i levels', colNames, count))
+}
+```
+
+```{r}
+#Approach 1: remove the column Product_Info_2:
+data.appr1 <- data[-2]
+```
+
+```{r}
+#Dimension reduction using linear analysis
+fit <- lm(data.appr1$Response~. , data = data.appr1)
+tmp.summary <- summary(fit)$coefficients
+
+newcols <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data.signi <- cbind(data.appr1[newcols], data.appr1['Response'])
+dim(data.signi) 
+#[1] 59381    42
+```
+
+```{r}
+sample_index = sample(nrow(data.signi), nrow(data.signi)*0.2)
+test_dataset = data.signi[sample_index,]
+train_dataset = data.signi[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+#For radial kernal
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+#[1] -0.447379
+#[1] 8.278238
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+#[1] 1.838813
+```
+
+
+```{r}
+#Below two tune won't work as the wait time is toooooooo long, and RStudio will crush after tried over 10 times.
+#DO NOT RUN!!!!
+svm_tune <- tune(svm, train.x = x, train.y = y, kernel="radial", 
+                 ranges=list(cost=10^c(-2:2), list(epsilon = seq(0,1,0.1))))
+
+finer_tune <- tune(svm, y ~ x,  data = Data,
+                   ranges = list(epsilon = seq(svm_tune$best.model$epsilon-.15,
+                                               svm_tune$best.model$epsilon+.15,
+                                               0.01), 
+                                 cost = seq(2^(log2(svm_tune$best.model$cost)-1),
+                                            2^(log2(svm_tune$best.model$cost)+1),
+                                            length=6)))
+
+plot(svm_tune)
+print(svm_tune)
+```
+
+
+```{r}
+#Approach 2: convert column Product_Info_2 to numeric:
+data.appr2 <- data
+data.appr2 <-categoricalfunc('Product_Info_2', data)
+dim(data.appr2)
+```
+
+```{r}
+fit <- lm(data.appr2$Response~. , data = data.appr2)
+tmp.summary <- summary(fit)$coefficients
+newcols <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data.signi <- cbind(data.appr2[newcols], data.appr2['Response'])
+dim(data.signi) 
+```
+
+```{r}
+#SVM analysis using data.signi model
+sample_index = sample(nrow(data.signi), nrow(data.signi)*0.2)
+test_dataset = data.signi[sample_index,]
+train_dataset = data.signi[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+#For radial kernal
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+#[1] 1.815529
+
+```
+
+```{r}
+#There's not much different regarding keeping or deleteing the Product_Info_2 column
+#To make the model as simple as possible, I'll remove the Product_Info_2 column.
+data <- data[-2]
+```
+
+```{r}
+#Now we me need to convert all categorical variables to numeric.
+#Some of the categ variables have too many categories, we need to decide if we are keeping them or not.
+categ.var <- c(paste("Product_Info_", c(1,3,5:7), sep=""), 
+               paste("Employment_Info_", c(2,3,5), sep=""),
+               paste("InsuredInfo_", 1:7, sep=""), 
+               paste("Insurance_History_", c(1:4,7:9), sep=""), "Family_Hist_1",
+               paste("Medical_History_", c(2:9, 11:14, 16:23, 25:31, 33:41), sep=""))
+
+for(coln in categ.var){
+  categoricalnum(coln, data)
+}
+#[1] "Column Product_Info_3 has 34 levels"
+#[1] "Column Employment_Info_2 has 36 levels"
+#[1] "Column InsuredInfo_3 has 11 levels"
+#[1] "Column Medical_History_2 has 579 levels"
+#These four are the ones we need to take care of
+
+#Categ variables:
+data.categ <- data[categ.var]
+#Everything else:
+data.rest <- data[colnames(data)[colnames(data)!=categ.var]]
+dim(data);dim(data.categ);dim(data.rest)
+```
+
+```{r}
+#First convert all to numeric and gets a result
+#Then remove corresponding columns to see the model performance
+```
+
+```{r}
+for(coln in colnames(data.categ)){
+  data.categ <-categoricalfunc(coln, data.categ)
+}
+dim(data.categ)
+#[1] 59381   810
+
+data.alltoc <- cbind(data.categ, data.rest)
+dim(data.alltoc)
+```
+
+```{r}
+fit <- lm(data.alltoc$Response~. , data = data.alltoc)
+tmp.summary <- summary(fit)$coefficients
+
+newrows <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data.alltoc <- cbind(data.alltoc[newrows], data.alltoc['Response'])
+dim(data.alltoc) 
+```
+
+```{r}
+sample_index = sample(nrow(data.alltoc), nrow(data.alltoc)*0.2)
+test_dataset = data.alltoc[sample_index,]
+train_dataset = data.alltoc[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+#[1] -0.3588182
+#[1] 8.833306
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+#[1] 1.749663
+```
+
+```{r}
+#Remove column Product_Info_3 and run again
+data.removepi3 <- data[-2]
+categ.var <- c(paste("Product_Info_", c(1,5:7), sep=""), 
+               paste("Employment_Info_", c(2,3,5), sep=""),
+               paste("InsuredInfo_", 1:7, sep=""), 
+               paste("Insurance_History_", c(1:4,7:9), sep=""), "Family_Hist_1", 
+               paste("Medical_History_", c(2:9, 11:14, 16:23, 25:31, 33:41), sep=""))
+
+#Categ variables:
+data.categ <- data.removepi3[categ.var]
+#Everything else:
+data.rest <- data.removepi3[colnames(data.removepi3)[colnames(data.removepi3)!=categ.var]]
+dim(data);dim(data.categ);dim(data.rest)
+```
+
+```{r}
+for(coln in colnames(data.categ)){
+  data.categ <-categoricalfunc(coln, data.categ)
+}
+dim(data.categ) 
+#[1] 59381   776
+
+data.removepi3 <- cbind(data.categ, data.rest)
+dim(data.removepi3)
+```
+
+```{r}
+fit <- lm(data.removepi3$Response~. , data = data.removepi3)
+tmp.summary <- summary(fit)$coefficients
+
+newrows <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data.removepi3 <- cbind(data.removepi3[newrows], data.removepi3['Response'])
+dim(data.removepi3) 
+#[1] 59381   680
+```
+
+```{r}
+sample_index = sample(nrow(data.removepi3), nrow(data.removepi3)*0.2)
+test_dataset = data.removepi3[sample_index,]
+train_dataset = data.removepi3[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+#[1] -0.4813702
+#[1] 8.528278
+
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+#[1] 1.757887
+```
+
+```{r}
+#Remove column Employment_Info_2 and run again
+data.removeei2 <- data[-6]
+categ.var <- c(paste("Product_Info_", c(1,3,5:7), sep=""), 
+               paste("Employment_Info_", c(3,5), sep=""),
+               paste("InsuredInfo_", 1:7, sep=""), 
+               paste("Insurance_History_", c(1:4,7:9), sep=""), "Family_Hist_1", 
+               paste("Medical_History_", c(2:9, 11:14, 16:23, 25:31, 33:41), sep=""))
+
+data.categ <- data.removeei2[categ.var]
+data.rest <- data.removeei2[colnames(data.removeei2)[colnames(data.removeei2)!=categ.var]]
+dim(data.removeei2);dim(data.categ);dim(data.rest)
+```
+
+```{r}
+for(coln in colnames(data.categ)){
+  data.categ <-categoricalfunc(coln, data.categ)
+}
+dim(data.categ) 
+#[1] 59381   774
+
+data.removeei2 <- cbind(data.categ, data.rest)
+dim(data.removeei2)
+#[1] 59381   836
+```
+
+```{r}
+fit <- lm(data.removeei2$Response~. , data = data.removeei2)
+tmp.summary <- summary(fit)$coefficients
+
+newrows <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data.removeei2 <- cbind(data.removeei2[newrows], data.removeei2['Response'])
+dim(data.removeei2) 
+#[1] 59381   679
+```
+
+```{r}
+sample_index = sample(nrow(data.removeei2), nrow(data.removeei2)*0.2)
+test_dataset = data.removeei2[sample_index,]
+train_dataset = data.removeei2[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+#[1] 0.02399867
+#[1] 8.67057
+
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+```
+
+```{r}
+#Remove column InsuredInfo_3 and run again
+data.removeif3 <- data[-11]
+categ.var <- c(paste("Product_Info_", c(1,3,5:7), sep=""), 
+               paste("Employment_Info_", c(2,3,5), sep=""),
+               paste("InsuredInfo_", c(1:2,4:7), sep=""), 
+               paste("Insurance_History_", c(1:4,7:9), sep=""), "Family_Hist_1",
+               paste("Medical_History_", c(2:9, 11:14, 16:23, 25:31, 33:41), sep=""))
+
+
+data.categ <- data[categ.var]
+data.rest <- data.removeif3[colnames(data.removeif3)[colnames(data.removeif3)!=categ.var]]
+dim(data.removeif3);dim(data.categ);dim(data.rest)
+```
+
+```{r}
+for(coln in colnames(data.categ)){
+  data.categ <-categoricalfunc(coln, data.categ)
+}
+dim(data.categ) 
+#[1] 59381   799
+
+data.removeif3 <- cbind(data.categ, data.rest)
+dim(data.removeif3)
+#[1] 59381   861
+```
+
+```{r}
+fit <- lm(data.removeif3$Response~. , data = data.removeif3)
+tmp.summary <- summary(fit)$coefficients
+
+newrows <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data.removeif3 <- cbind(data.removeif3[newrows], data.removeif3['Response'])
+dim(data.removeif3) 
+#[1] 59381   698
+```
+
+```{r}
+sample_index = sample(nrow(data.removeif3), nrow(data.removeif3)*0.2)
+test_dataset = data.removeif3[sample_index,]
+train_dataset = data.removeif3[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+#[1] -0.2896463
+#[1] 8.775515
+
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+
+```
+
+```{r}
+#Remove column Medical_History_2 and run again
+data.removemh2 <- data[-24]
+categ.var <- c(paste("Product_Info_", c(1,3,5:7), sep=""), 
+               paste("Employment_Info_", c(2,3,5), sep=""),
+               paste("InsuredInfo_", 1:7, sep=""), 
+               paste("Insurance_History_", c(1:4,7:9), sep=""), "Family_Hist_1",
+               paste("Medical_History_", c(3:9, 11:14, 16:23, 25:31, 33:41), sep=""))
+
+
+data.categ <- data[categ.var]
+data.rest <- data.removemh2[colnames(data.removemh2)[colnames(data.removemh2)!=categ.var]]
+dim(data.removemh2);dim(data.categ);dim(data.rest)
+```
+
+```{r}
+for(coln in colnames(data.categ)){
+  data.categ <-categoricalfunc(coln, data.categ)
+}
+dim(data.categ) 
+#[1] 59381   231
+
+data.removemh2 <- cbind(data.categ, data.rest)
+dim(data.removemh2)
+#[1] 59381   293
+
+```
+
+```{r}
+fit <- lm(data.removemh2$Response~. , data = data.removemh2)
+tmp.summary <- summary(fit)$coefficients
+
+newrows <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data.removemh2 <- cbind(data.removemh2[newrows], data.removemh2['Response'])
+dim(data.removemh2) 
+#[1] 59381   162
+```
+
+```{r}
+sample_index = sample(nrow(data.removemh2), nrow(data.removemh2)*0.2)
+test_dataset = data.removemh2[sample_index,]
+train_dataset = data.removemh2[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+#[1] -1.511668
+#[1] 8.592575
+
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+#[1] 1.729727
+```
+
+```{r}
+#So far, I've decided to remove column Product_Info_2, Product_Info_3, InsuredInfo_3, Employment_Info_2, Medical_History_2
+
+data <- data[-c(2,6,11,24)]
+colnames(data)
+```
+
+```{r}
+#Check the new dataset
+categ.var <- c(paste("Product_Info_", c(1,5:7), sep=""), 
+               paste("Employment_Info_", c(3,5), sep=""),
+               paste("InsuredInfo_", c(1,2,4:7), sep=""), 
+               paste("Insurance_History_", c(1:4,7:9), sep=""), "Family_Hist_1",
+               paste("Medical_History_", c(3:9, 11:14, 16:23, 25:31, 33:41), sep=""))
+
+#Categ variables:
+data.categ <- data[categ.var]
+#Everything else:
+data.rest <- data[colnames(data)[colnames(data)!=categ.var]]
+dim(data);dim(data.categ);dim(data.rest)
+```
+
+```{r}
+#Convert all categorical variables to numeric
+for(coln in colnames(data.categ)){
+  data.categ <-categoricalfunc(coln, data.categ)
+}
+dim(data.categ) 
+#[1] 59381   150
+
+data <- cbind(data.categ, data.rest)
+dim(data)
+#[1] 59381   212
+```
+
+```{r}
+fit <- lm(data$Response~. , data = data)
+tmp.summary <- summary(fit)$coefficients
+
+newrows <- rownames(tmp.summary)[tmp.summary[,4]>=0.05][-1]
+data <- cbind(data[newrows], data['Response'])
+dim(data) 
+#[1] 59381   98
+```
+
+```{r}
+#Now that my model contains only 98 columns, build SVM regression based on these numbers
+sample_index = sample(nrow(data), nrow(data)*0.2)
+test_dataset = data[sample_index,]
+train_dataset = data[-sample_index,]
+x <- subset(train_dataset, select = -Response) # x is the predict variable 
+y <- train_dataset[,'Response'] #y is factor
+```
+
+```{r}
+radial.model <- svm (Response ~ ., data=train_dataset, scale=F)
+summary(radial.model)
+```
+
+```{r}
+#Test performance on training dataset
+pred <- predict(radial.model,train_dataset)
+min(pred);max(pred)
+#[1] -2.066659
+#[1] 8.540122
+
+svrPredictionRMSE <- me(y - pred)
+svrPredictionRMSE
+#[1] 1.727397
+```
+
+```{r}
+#Test performance on test dataset
+pred_test <- predict(radial.model,test_dataset)
+min(pred_test);max(pred_test)
+#[1] -1.844811
+#[1] 8.249107
+
+svrPredictionRMSE <- me(test_dataset$Response - pred_test)
+svrPredictionRMSE
+#[1] 1.72519
+```
+
+```{r}
+
+tmpp <- pred_test
+as.factor(round(tmpp))
+
+tmpp[round(tmpp)>=8] <- 8
+tmpp[round(tmpp)<=1] <- 1
+
+table(test_dataset$Response, round(tmpp))
+
+
+```
+
+```{r}
+#The accuracy increased a little bit.
+#Now the model contains only below columms:
+colnames(data)
+```
+
